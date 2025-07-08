@@ -140,79 +140,54 @@ const AIRequirementsGatherer = () => {
     return sentences.find(sentence => sentence.toLowerCase().includes(keyword)) || '';
   };
 
-  const generateAIResponse = async (userInput: string, _: ProjectContext = {}): Promise<string> => {
+  const generateAIResponse = async (userInput: string): Promise<string> => {
     setIsTyping(true);
 
-    // Simulate AI thinking time
-    await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 2000));
-
     const analysis = analyzeUserInput(userInput);
-    let response = '';
-    let followUpQuestions: string[] = [];
-    let updatedRequirements = { ...requirements };
     const updatedContext = { ...projectContext, ...analysis };
-
-    // Update project context
     if (analysis.projectType && !projectContext.projectType) {
       updatedContext.projectType = analysis.projectType;
-      updatedRequirements.projectType = analysis.projectType;
     }
 
-    // Generate contextual response based on session phase
-    switch (sessionPhase) {
-      case 'introduction':
-        if (analysis.projectType) {
-          response = `Great! I can see you're looking to build a ${analysis.projectType}. That's exciting! `;
-          response += getProjectTypeInsight(analysis.projectType as ProjectTypeKey);
-          followUpQuestions = getInitialQuestions(analysis.projectType as ProjectTypeKey);
-          setSessionPhase('discovery');
-        } else {
-          response = "I'd love to help you gather requirements for your project! Could you tell me a bit more about what you're planning to build? For example, is it a web application, mobile app, API, or something else?";
-        }
-        break;
+    try {
+      const response = await fetch('http://localhost:3001/api/generate-response', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          userInput,
+          projectContext: updatedContext,
+          sessionPhase,
+          requirements,
+        }),
+      });
 
-      case 'discovery':
-        response = generateDiscoveryResponse(userInput, analysis, updatedContext as any);
-        followUpQuestions = generateIntelligentFollowUps(analysis, updatedContext as any);
-        updatedRequirements = extractRequirementsFromInput(userInput, analysis, updatedRequirements);
+      if (!response.ok) {
+        throw new Error('API request failed');
+      }
 
-        // Check if we have enough info to move to clarification
-        if (Object.keys(updatedRequirements).length > 5) {
-          setSessionPhase('clarification');
-        }
-        break;
+      const data = await response.json();
 
-      case 'clarification':
-        response = generateClarificationResponse(userInput, analysis, updatedContext as any);
-        followUpQuestions = generateClarificationQuestions(updatedRequirements);
-        updatedRequirements = refineRequirements(userInput, analysis, updatedRequirements);
+      // Update requirements and context based on the conversation
+      const updatedRequirements = extractRequirementsFromInput(userInput, analysis, requirements);
+      setRequirements(updatedRequirements);
+      setProjectContext(updatedContext as any);
 
-        // Check if ready for summary
-        if (followUpQuestions.length === 0) {
-          setSessionPhase('summary');
-        }
-        break;
+      // Advance session phase
+      if (sessionPhase === 'introduction' && updatedContext.projectType) {
+        setSessionPhase('discovery');
+      } else if (sessionPhase === 'discovery' && Object.keys(updatedRequirements).length > 5) {
+        setSessionPhase('clarification');
+      }
 
-      case 'summary':
-        response = "Perfect! I think I have a comprehensive understanding of your requirements now. Let me generate a detailed requirements document for you.";
-        break;
+      return data.response;
+    } catch (error) {
+      console.error("Error calling AI API:", error);
+      return "I'm having trouble connecting to my brain right now. Please try again in a moment.";
+    } finally {
+      setIsTyping(false);
     }
-
-    // Add intelligent insights
-    if (analysis.contextClues.length > 0) {
-      response += "\n\n" + generateContextualInsights(analysis.contextClues, updatedContext as any);
-    }
-
-    // Add follow-up questions
-    if (followUpQuestions.length > 0) {
-      response += "\n\nTo better understand your needs:\n" + followUpQuestions.map(q => `• ${q}`).join('\n');
-    }
-
-    setRequirements(updatedRequirements);
-    setProjectContext(updatedContext as any);
-    setIsTyping(false);
-
-    return response;
   };
 
   const getProjectTypeInsight = (projectType: ProjectTypeKey): string => {
